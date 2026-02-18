@@ -29,6 +29,13 @@ class CounterPage extends StatelessWidget {
                   },
                   child: const Text("View Character Info"),
                 ),
+                const SizedBox(height: 20),
+                ElevatedButton(
+                  onPressed: () {
+                    context.push('/camera');
+                  },
+                  child: const Text('Open Camera'),
+                ),
               ],
             );
           },
