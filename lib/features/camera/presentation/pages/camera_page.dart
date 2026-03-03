@@ -76,7 +76,7 @@ class _CameraPageState extends State<CameraPage> {
           ],
         ),
         // 상태 메시지
-        Text(state.statusMessage, textAlign: TextAlign.center),
+        Text(state.livenessStatus.statusMessage, textAlign: TextAlign.center),
       ],
     );
   }

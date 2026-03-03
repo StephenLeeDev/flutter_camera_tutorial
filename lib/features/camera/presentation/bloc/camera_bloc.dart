@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
+import '../../domain/enums/face_liveness_status.dart';
 import '../../utils/face_liveness_util.dart';
 import '../../utils/image_converter.dart';
 import 'camera_event.dart';
@@ -12,6 +13,9 @@ import 'camera_state.dart';
 
 class CameraBloc extends Bloc<CameraEvent, CameraState> {
   late CameraController? _cameraController;
+  
+  /// 현재 얼굴 인증 진행 상태
+  FaceLivenessStatus livenessStatus = FaceLivenessStatus.faceNotDetected;
 
   final _faceDetector = FaceDetector(
     options: FaceDetectorOptions(
@@ -90,6 +94,8 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
   CameraBloc() : super(CameraInitial()) {
     on<InitializeCamera>(_onInitializeCamera);
+    // 상태 업데이트를 위한 핸들러 등록
+    on<UpdateLivenessStatus>(_onUpdateLivenessStatus);
   }
 
   Future<void> _onInitializeCamera(
@@ -117,6 +123,7 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
         CameraReady(
           cameraController: _cameraController!,
           statusMessage: '카메라가 준비되었습니다.',
+          livenessStatus: livenessStatus,
         ),
       );
     } on CameraException catch (e) {
@@ -126,8 +133,23 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     }
   }
 
+  /// livenessStatus가 변경될 때 호출되는 핸들러
+  void _onUpdateLivenessStatus(
+    UpdateLivenessStatus event,
+    Emitter<CameraState> emit,
+  ) {
+    // 로그 출력
+    debugPrint("[FaceLivenessStatus Changed] : ${event.status.name}");
+
+    // 상태 반영
+    if (state is CameraReady) {
+      final readyState = state as CameraReady;
+      emit(readyState.copyWith(livenessStatus: event.status));
+    }
+  }
+
   Future<void> _processCameraImage(CameraImage image) async {
-    if (_cameraController == null) return;
+    if (_cameraController == null || isClosed) return;
 
     final inputImage = ImageConverter.fromCameraImage(
       image,
@@ -137,8 +159,11 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
     final faces = await _faceDetector.processImage(inputImage);
 
+    FaceLivenessStatus? newStatus;
+
     /// 1. 얼굴 감지 여부
     if (faces.isEmpty) {
+      newStatus = FaceLivenessStatus.faceNotDetected;
       debugPrint("faces.isEmpty");
     } else {
       /// 2. 얼굴이 감지된 경우, 얼굴 크기부터 확인
@@ -193,27 +218,29 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
 
         /// 2-1. 얼굴이 너무 작은 경우 -> 감지 실패로 처리
         if (faceWidth / imageWidth < _minFaceSizeRatio) {
-          // setStatus(FaceLivenessStatus.faceTooSmall);
+          newStatus = FaceLivenessStatus.faceTooSmall;
           debugPrint("_processCameraImage : 얼굴이 너무 작음");
         }
         /// 2-2. 얼굴이 너무 큰 경우 -> 감지 실패로 처리
         else if (faceWidth / imageWidth > _maxFaceSizeRatio) {
-          // setStatus(FaceLivenessStatus.faceTooLarge);
+          newStatus = FaceLivenessStatus.faceTooLarge;
           debugPrint("_processCameraImage : 얼굴이 너무 큼");
         }
         /// 얼굴이 화면 중앙에 위치 하지 않은 경우
         else if (!isFaceCentered) {
-          // setStatus(FaceLivenessStatus.faceNotCentered);
+          newStatus = FaceLivenessStatus.faceNotCentered;
           debugPrint("_processCameraImage : 얼굴이 화면 중앙에 위치 하지 않음");
         }
         /// 얼굴이 화면을 정면으로 바라보고 있지 않음
         else if (!isFront) {
-          // setStatus(FaceLivenessStatus.faceNotFront);
+          newStatus = FaceLivenessStatus.faceNotFront;
           debugPrint("_processCameraImage : 얼굴이 화면 정면을 보고 있지 않음");
         } else {
           /// 촬영 중인 얼굴이 유효하면, 검증 시작
           if (isValidFace) {
-            debugPrint("_processCameraImage : the face is valid");
+             newStatus = FaceLivenessStatus.blinkRequired;
+             debugPrint("_processCameraImage : the face is valid");
+             
             /// 눈 깜빡임 감지 로직
             final double leftEyeOpenProb = face.leftEyeOpenProbability ?? 1.0;
             final double rightEyeOpenProb = face.rightEyeOpenProbability ?? 1.0;
@@ -266,6 +293,13 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
       }
       previousFace = face;
     }
+
+    if (livenessStatus != newStatus && newStatus != null) {
+      livenessStatus = newStatus;
+      if (state is CameraReady) {
+        add(UpdateLivenessStatus(newStatus));
+      }
+    }
   }
 
   @override
@@ -276,4 +310,12 @@ class CameraBloc extends Bloc<CameraEvent, CameraState> {
     _faceDetector.close();
     return super.close();
   }
+}
+
+// 상태 업데이트를 위한 내부 이벤트 추가 (필요시 camera_event.dart에 정의)
+class UpdateLivenessStatus extends CameraEvent {
+  final FaceLivenessStatus status;
+  const UpdateLivenessStatus(this.status);
+  @override
+  List<Object> get props => [status];
 }
